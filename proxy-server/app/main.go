@@ -3,11 +3,16 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
+	"proxy-server/pkg/api"
+	"proxy-server/pkg/proxy"
+	"proxy-server/pkg/repository"
+	"time"
+
+	"github.com/gorilla/mux"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"net"
-	"proxy-server/proxy-server/pkg/proxy"
-	"time"
 )
 
 const PROXYPORT = 8080
@@ -22,7 +27,10 @@ func main() {
 		fmt.Println(err)
 	}
 
-	proxyHandler, err := proxy.NewHandler()
+	requests := repository.NewMongoRequestSaver(mongoConnection)
+	responses := repository.NewMongoResponseSaver(mongoConnection)
+
+	proxyHandler, err := proxy.NewHandler(requests, responses)
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -38,6 +46,8 @@ func main() {
 	}
 
 	fmt.Printf("Proxy listening at port %d \n", PROXYPORT)
+
+	go startApi(requests, responses)
 
 	for {
 		connection, err := proxyListener.Accept()
@@ -55,4 +65,27 @@ func main() {
 		}()
 	}
 
+}
+
+func startApi(req repository.RequestSaver, resp repository.ResponseSaver) {
+	router := mux.NewRouter()
+
+	handler, err := api.NewHandler(req, resp)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
+	router.HandleFunc("/requests", handler.ListRequests)
+	router.HandleFunc("/requests/{id}", handler.GetRequest)
+	router.HandleFunc("/repeat/{id}", handler.RepeatRequest)
+	router.HandleFunc("/requests/{id}/dump", handler.DumpRequest)
+
+	router.HandleFunc("/responses", handler.ListResponses)
+	router.HandleFunc("/responses/{id}", handler.GetResponse)
+	router.HandleFunc("/requests/{id}/response", handler.GetRequestResponse)
+
+	fmt.Println("Api listening at port 8000...")
+
+	http.ListenAndServe(":8000", router)
 }

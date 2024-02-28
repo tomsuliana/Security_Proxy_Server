@@ -14,18 +14,21 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"proxy-server/pkg/repository"
 	"strings"
 	"sync"
 	"time"
 )
 
 type Handler struct {
-	certificates map[string][]byte
-	mutex        sync.Mutex
-	key          []byte
+	certificates  map[string][]byte
+	mutex         sync.Mutex
+	key           []byte
+	requestSaver  repository.RequestSaver
+	responseSaver repository.ResponseSaver
 }
 
-func NewHandler() (*Handler, error) {
+func NewHandler(req repository.RequestSaver, resp repository.ResponseSaver) (*Handler, error) {
 	keyInBytes, err := os.ReadFile("https/cert.key")
 	if err != nil {
 		return nil, err
@@ -37,8 +40,10 @@ func NewHandler() (*Handler, error) {
 	}
 
 	return &Handler{
-		certificates: certificates,
-		key:          keyInBytes,
+		certificates:  certificates,
+		key:           keyInBytes,
+		requestSaver:  req,
+		responseSaver: resp,
 	}, nil
 }
 
@@ -96,12 +101,19 @@ func (h *Handler) handleRequest(clientConnection net.Conn, toProxy *http.Request
 
 	fmt.Println(toProxy)
 
+	requestId, err := h.requestSaver.Save(toProxy)
+	if err != nil {
+		return err
+	}
+
 	responce, err := sendRequest(hostConnection, toProxy)
 	if err != nil {
 		return err
 	}
 
 	defer responce.Body.Close()
+
+	h.responseSaver.Save(requestId, responce)
 
 	return writeResponce(responce, clientConnection)
 
