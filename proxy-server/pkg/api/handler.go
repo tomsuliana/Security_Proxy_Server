@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	commandinjection "proxy-server/pkg/command-injection"
 	"proxy-server/pkg/repository"
 
 	"github.com/gorilla/mux"
@@ -132,6 +133,96 @@ func (h *Handler) DumpRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Write(bytes)
+}
+
+func (h *Handler) ScanRequest(w http.ResponseWriter, r *http.Request) {
+	const semicolonString = ";cat /etc/passwd;"
+	const pipelineString = "|cat /etc/passwd|"
+	const appostrofString = "`cat /etc/passwd`"
+
+	req, err := h.requests.GetEncoded(mux.Vars(r)["id"])
+	if err != nil {
+		HttpError(err, w)
+		return
+	}
+
+	trySemicolonInjReq, err := commandinjection.TryInjection(req, semicolonString)
+	if err != nil {
+		HttpError(err, w)
+		return
+	}
+
+	resp, err := h.client.Do(trySemicolonInjReq)
+	if err != nil {
+		HttpError(errors.New("Error resending request: "+err.Error()), w)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		HttpError(errors.New("Error reading responce: "+err.Error()), w)
+		return
+	}
+
+	isVulnarable := false
+
+	if commandinjection.HasRoot(body) {
+		isVulnarable = true
+	}
+
+	tryPipelineInjReq, err := commandinjection.TryInjection(req, pipelineString)
+	if err != nil {
+		HttpError(err, w)
+		return
+	}
+
+	resp, err = h.client.Do(tryPipelineInjReq)
+	if err != nil {
+		HttpError(errors.New("Error resending request: "+err.Error()), w)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		HttpError(errors.New("Error reading responce: "+err.Error()), w)
+		return
+	}
+
+	if commandinjection.HasRoot(body) {
+		isVulnarable = true
+	}
+
+	tryAppostrofInjReq, err := commandinjection.TryInjection(req, appostrofString)
+	if err != nil {
+		HttpError(err, w)
+		return
+	}
+
+	resp, err = h.client.Do(tryAppostrofInjReq)
+	if err != nil {
+		HttpError(errors.New("Error resending request: "+err.Error()), w)
+		return
+	}
+	defer resp.Body.Close()
+
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		HttpError(errors.New("Error reading responce: "+err.Error()), w)
+		return
+	}
+
+	if commandinjection.HasRoot(body) {
+		isVulnarable = true
+	}
+
+	if isVulnarable {
+		w.Write([]byte("Request is vulnarable"))
+	} else {
+		w.Write([]byte("Request is not vulnarable"))
+	}
+
 }
 
 func (h *Handler) GetResponse(w http.ResponseWriter, r *http.Request) {
